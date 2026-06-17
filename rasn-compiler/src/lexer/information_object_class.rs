@@ -115,7 +115,7 @@ pub fn instance_of(input: Input<'_>) -> ParserResult<'_, ASN1Type> {
             tag(INSTANCE_OF),
             pair(
                 skip_ws_and_comments(uppercase_identifier),
-                skip_ws_and_comments(constraints),
+                skip_ws_and_comments(opt(constraints)),
             ),
         ),
         |(id, constraints)| {
@@ -123,7 +123,7 @@ pub fn instance_of(input: Input<'_>) -> ParserResult<'_, ASN1Type> {
                 parent: None,
                 module: None,
                 identifier: id.into(),
-                constraints,
+                constraints: constraints.unwrap_or_default(),
             })
         },
     )
@@ -454,6 +454,7 @@ mod tests {
                         InformationObjectField::FixedValueField(FixedValueField {
                             identifier: "&errorCode".to_string(),
                             value: ASN1Value::ElsewhereDeclaredValue {
+                                module: None,
                                 identifier: "asn-val-security-failure".into(),
                                 parent: None
                             }
@@ -469,6 +470,7 @@ mod tests {
                         InformationObjectField::FixedValueField(FixedValueField {
                             identifier: "&errorCode".into(),
                             value: ASN1Value::ElsewhereDeclaredValue {
+                                module: None,
                                 identifier: "asn-val-unknown-order".into(),
                                 parent: None
                             }

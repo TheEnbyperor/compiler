@@ -1107,6 +1107,7 @@ mod tests {
                 set: ElementOrSetOperation::SetOperation(SetOperation {
                     base: SubtypeElements::SingleValue {
                         value: ASN1Value::ElsewhereDeclaredValue {
+                            module: None,
                             identifier: "unknown".to_string(),
                             parent: None
                         },
@@ -1116,10 +1117,12 @@ mod tests {
                     operant: Box::new(ElementOrSetOperation::SetOperation(SetOperation {
                         base: SubtypeElements::ValueRange {
                             min: Some(ASN1Value::ElsewhereDeclaredValue {
+                                module: None,
                                 identifier: "passengerCar".to_string(),
                                 parent: None
                             }),
                             max: Some(ASN1Value::ElsewhereDeclaredValue {
+                                module: None,
                                 identifier: "tram".to_string(),
                                 parent: None
                             }),
@@ -1129,6 +1132,7 @@ mod tests {
                         operant: Box::new(ElementOrSetOperation::Element(
                             SubtypeElements::SingleValue {
                                 value: ASN1Value::ElsewhereDeclaredValue {
+                                    module: None,
                                     identifier: "agricultural".to_string(),
                                     parent: None
                                 },
@@ -1198,13 +1202,9 @@ mod tests {
                                 identifier: "IDENTIFIED".into(),
                                 constraints: vec![]
                             }),
-                            SyntaxApplication::LiteralOrTypeReference(DeclarationElsewhere {
-                                parent: None,
-                                module: None,
-                                identifier: "BY".into(),
-                                constraints: vec![]
-                            }),
+                            SyntaxApplication::Literal("BY".into()),
                             SyntaxApplication::ValueReference(ASN1Value::ElsewhereDeclaredValue {
+                                module: None,
                                 identifier: "addGrpC".into(),
                                 parent: None
                             })

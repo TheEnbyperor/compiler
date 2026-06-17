@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.3](https://github.com/librasn/compiler/compare/rasn-compiler-v0.14.2...rasn-compiler-v0.14.3) - 2025-08-25
+
+### Fixed
+
+- fix tests
+
+### Other
+
+- Support more advanced constraints.
+- Correct handling of non-known-multiplier string types.
+
 ## [0.14.2](https://github.com/librasn/compiler/compare/rasn-compiler-v0.14.1...rasn-compiler-v0.14.2) - 2025-08-13
 
 ### Other
@@ -36,6 +47,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.16.0](https://github.com/librasn/compiler/compare/rasn-compiler-v0.15.0...rasn-compiler-v0.16.0) - 2025-12-31
+
+### Other
+
+- Merge pull request #181 from Rawk/choice-without-constraint
+- Merge pull request #182 from Rawk/fix-realnumber
+- Merge pull request #178 from Rawk/refactor-builtin_or_elsewhere
+- Merge pull request #172 from Rawk/elswhere-declared-value-in-module
+- Format and fix warnings
+
+## [0.15.0](https://github.com/librasn/compiler/compare/rasn-compiler-v0.14.3...rasn-compiler-v0.15.0) - 2025-12-20
+
+### Added
+
+- Support `T61String`
+
+### Fixed
+
+- Add i128 suffix to generated unbounded Integer
+
+### Other
+
+- Add `BY` and `DEFINED` to reserved words
+- Parse `ANY [DEFINED BY identifier]`
 
 ## [0.14.0](https://github.com/librasn/compiler/compare/rasn-compiler-v0.13.0...rasn-compiler-v0.14.0) - 2025-07-17
 

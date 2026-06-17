@@ -27,12 +27,13 @@ use crate::{
 use crate::{intermediate::macros::ToplevelMacroDefinition, AsnSourceUnit};
 
 use self::{
-    bit_string::*, boolean::*, character_string::*, choice::*, common::*, constraint::*,
-    embedded_pdv::*, enumerated::*, error::LexerError, external::*, information_object_class::*,
-    integer::*, null::*, object_identifier::*, octet_string::*, parameterization::*, real::*,
-    sequence::*, sequence_of::*, set::*, set_of::*, time::*,
+    any_type::any_type, bit_string::*, boolean::*, character_string::*, choice::*, common::*,
+    constraint::*, embedded_pdv::*, enumerated::*, error::LexerError, external::*,
+    information_object_class::*, integer::*, null::*, object_identifier::*, octet_string::*,
+    parameterization::*, real::*, sequence::*, sequence_of::*, set::*, set_of::*, time::*,
 };
 
+mod any_type;
 mod bit_string;
 mod boolean;
 mod character_string;
@@ -151,6 +152,7 @@ pub fn asn1_type(input: Input<'_>) -> ParserResult<'_, ASN1Type> {
     alt((
         alt((
             null,
+            any_type,
             selection_type_choice,
             object_identifier,
             sequence_of,
@@ -186,12 +188,12 @@ pub fn asn1_value(input: Input<'_>) -> ParserResult<'_, ASN1Value> {
         null_value,
         map(object_identifier_value, ASN1Value::ObjectIdentifier),
         choice_value,
-        real_value,
         sequence_value,
         time_value,
         bit_string_value,
         boolean_value,
         integer_value,
+        real_value,
         character_string_value,
         elsewhere_declared_value,
     ))
@@ -200,14 +202,19 @@ pub fn asn1_value(input: Input<'_>) -> ParserResult<'_, ASN1Value> {
 
 pub fn elsewhere_declared_value(input: Input<'_>) -> ParserResult<'_, ASN1Value> {
     map(
-        pair(
+        (
+            opt(terminated(
+                skip_ws_and_comments(module_reference),
+                skip_ws_and_comments(char(DOT)),
+            )),
             opt(skip_ws_and_comments(recognize(many1(pair(
                 identifier,
                 tag(".&"),
             ))))),
-            value_reference,
+            skip_ws_and_comments(value_reference),
         ),
-        |(p, id)| ASN1Value::ElsewhereDeclaredValue {
+        |(m, p, id)| ASN1Value::ElsewhereDeclaredValue {
+            module: m.map(str::to_owned),
             parent: p.map(|par| par.inner().to_string()),
             identifier: id.into(),
         },
@@ -218,10 +225,10 @@ pub fn elsewhere_declared_value(input: Input<'_>) -> ParserResult<'_, ASN1Value>
 pub fn elsewhere_declared_type(input: Input<'_>) -> ParserResult<'_, ASN1Type> {
     map(
         (
-            opt(skip_ws_and_comments(recognize(many1(pair(
+            opt(skip_ws_and_comments(into_inner(recognize(many1(pair(
                 identifier,
                 tag(".&"),
-            ))))),
+            )))))),
             opt(skip_ws_and_comments(terminated(
                 module_reference,
                 skip_ws_and_comments(char(DOT)),
@@ -230,12 +237,12 @@ pub fn elsewhere_declared_type(input: Input<'_>) -> ParserResult<'_, ASN1Type> {
             opt(skip_ws_and_comments(constraints)),
         ),
         |(parent, module, id, constraints)| {
-            ASN1Type::builtin_or_elsewhere(
-                parent.map(|p| p.into_inner()),
-                module,
-                id,
-                constraints.unwrap_or_default(),
-            )
+            ASN1Type::ElsewhereDeclaredType(DeclarationElsewhere {
+                parent: parent.map(str::to_owned),
+                module: module.map(str::to_owned),
+                identifier: id.to_owned(),
+                constraints: constraints.unwrap_or_default(),
+            })
         },
     )
     .parse(input)
@@ -315,5 +322,22 @@ END -- LdapSystemSchema"#
         )
         .unwrap()
         .0
+    );
+}
+
+#[test]
+fn test_elsewhere_declared_value_in_module() {
+    let input = Input::from("NLM.sNPADTEAddress");
+
+    let (rest, result) = elsewhere_declared_value(input).unwrap();
+
+    assert!(rest.is_empty());
+    assert_eq!(
+        result,
+        ASN1Value::ElsewhereDeclaredValue {
+            module: Some("NLM".to_owned()),
+            parent: None,
+            identifier: "sNPADTEAddress".to_owned()
+        }
     );
 }

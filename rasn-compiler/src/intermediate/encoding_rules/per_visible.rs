@@ -71,9 +71,12 @@ impl PerVisibleAlphabetConstraints {
         // ITU-T X.691 clause 30.1, 30.6: Known-multiplier character strings types
         match string_type {
             // 30.1: Known-multiplier character string types
-            CharacterStringType::NumericString | CharacterStringType::PrintableString |
-            CharacterStringType::VisibleString | CharacterStringType::IA5String |
-            CharacterStringType::BMPString | CharacterStringType::UniversalString => {},
+            CharacterStringType::NumericString
+            | CharacterStringType::PrintableString
+            | CharacterStringType::VisibleString
+            | CharacterStringType::IA5String
+            | CharacterStringType::BMPString
+            | CharacterStringType::UniversalString => {}
             // 30.6: Non-known-multiplier character string types
             _ => return Ok(None),
         }
@@ -81,7 +84,7 @@ impl PerVisibleAlphabetConstraints {
             Constraint::Subtype(c) => match &c.set {
                 ElementOrSetOperation::Element(e) => Self::from_subtype_elem(Some(e), string_type),
                 ElementOrSetOperation::SetOperation(s) => Self::from_subtype_elem(
-                    fold_constraint_set(s, Some(&string_type.character_set()), false)?.as_ref(),
+                    fold_constraint_set(s, Some(string_type.character_set()), false)?.as_ref(),
                     string_type,
                 ),
             },
@@ -130,7 +133,7 @@ impl PerVisibleAlphabetConstraints {
                     let mut char_subset = s
                         .clone()
                         .chars()
-                        .map(|c| find_char_index(&string_type.character_set(), c).map(|i| (i, c)))
+                        .map(|c| find_char_index(string_type.character_set(), c).map(|i| (i, c)))
                         .collect::<Result<Vec<(usize, char)>, _>>()?;
                     char_subset.sort_by(|(a, _), (b, _)| a.cmp(b));
                     Ok(Some(PerVisibleAlphabetConstraints {
@@ -157,12 +160,12 @@ impl PerVisibleAlphabetConstraints {
                 }
                 let (lower, upper) = match (min, max) {
                     (Some(ASN1Value::String(min)), Some(ASN1Value::String(max))) => (
-                        find_string_index(min, &char_set)?,
-                        find_string_index(max, &char_set)?,
+                        find_string_index(min, char_set)?,
+                        find_string_index(max, char_set)?,
                     ),
-                    (None, Some(ASN1Value::String(max))) => (0, find_string_index(max, &char_set)?),
+                    (None, Some(ASN1Value::String(max))) => (0, find_string_index(max, char_set)?),
                     (Some(ASN1Value::String(min)), None) => {
-                        (find_string_index(min, &char_set)?, char_set.len() - 1)
+                        (find_string_index(min, char_set)?, char_set.len() - 1)
                     }
                     _ => (0, char_set.len() - 1),
                 };
@@ -337,9 +340,17 @@ impl TryFrom<&Constraint> for PerVisibleRangeConstraints {
                 let mut per_visible: PerVisibleRangeConstraints = match &c.set {
                     ElementOrSetOperation::Element(e) => Some(e).try_into(),
                     ElementOrSetOperation::SetOperation(s) => {
-                        let mut v: PerVisibleRangeConstraints = fold_constraint_set(s, None, true)?.as_ref().try_into()?;
-                        if s.operator == SetOperator::Intersection && (matches!(s.base, SubtypeElements::SizeConstraint(_)) |
-                            matches!(*s.operant, ElementOrSetOperation::Element(SubtypeElements::SizeConstraint(_)))) {
+                        let mut v: PerVisibleRangeConstraints =
+                            fold_constraint_set(s, None, true)?.as_ref().try_into()?;
+                        if s.operator == SetOperator::Intersection
+                            && (matches!(s.base, SubtypeElements::SizeConstraint(_))
+                                | matches!(
+                                    *s.operant,
+                                    ElementOrSetOperation::Element(
+                                        SubtypeElements::SizeConstraint(_)
+                                    )
+                                ))
+                        {
                             v.is_size_constraint = true;
                         }
                         Ok(v)
@@ -408,10 +419,10 @@ impl TryFrom<Option<&SubtypeElements>> for PerVisibleRangeConstraints {
                 extensible: _,
             }) => per_visible_range_constraints(
                 matches!(subtype, ASN1Type::Integer(_)),
-                subtype.constraints().unwrap_or(&vec![]),
+                subtype.constraints(),
             ),
             x => {
-                println!("{x:?}");
+                eprintln!("{x:?}");
                 unreachable!()
             }
         }
@@ -448,9 +459,7 @@ impl PerVisible for SubtypeElements {
             SubtypeElements::ContainedSubtype {
                 subtype: s,
                 extensible: _,
-            } => s
-                .constraints()
-                .is_some_and(|c| c.iter().any(|c| c.per_visible())),
+            } => s.constraints().iter().any(Constraint::per_visible),
             SubtypeElements::ValueRange {
                 min: _,
                 max: _,
@@ -492,7 +501,9 @@ fn fold_constraint_set(
 ) -> Result<Option<SubtypeElements>, GrammarError> {
     let folded_operant = match &*set.operant {
         ElementOrSetOperation::Element(e) => e.per_visible().then(|| e.clone()),
-        ElementOrSetOperation::SetOperation(s) => fold_constraint_set(s, char_set, range_constraint)?,
+        ElementOrSetOperation::SetOperation(s) => {
+            fold_constraint_set(s, char_set, range_constraint)?
+        }
     };
     match (&set.base, &folded_operant) {
         (base, Some(SubtypeElements::PermittedAlphabet(elem_or_set)))
@@ -544,7 +555,9 @@ fn fold_constraint_set(
         | (SubtypeElements::SizeConstraint(elem_or_set), None) => {
             return match &**elem_or_set {
                 ElementOrSetOperation::Element(e) => Ok(Some(e.clone())),
-                ElementOrSetOperation::SetOperation(s) => fold_constraint_set(s, char_set, range_constraint),
+                ElementOrSetOperation::SetOperation(s) => {
+                    fold_constraint_set(s, char_set, range_constraint)
+                }
             }
         }
         _ => (),
@@ -622,7 +635,15 @@ fn fold_constraint_set(
                     max,
                     extensible: x2,
                 }),
-            ) => intersect_single_and_range(value, min.as_ref(), max.as_ref(), *x1, *x2, char_set, range_constraint),
+            ) => intersect_single_and_range(
+                value,
+                min.as_ref(),
+                max.as_ref(),
+                *x1,
+                *x2,
+                char_set,
+                range_constraint,
+            ),
             (
                 SubtypeElements::ValueRange {
                     min,
@@ -633,7 +654,15 @@ fn fold_constraint_set(
                     value,
                     extensible: x1,
                 }),
-            ) => intersect_single_and_range(value, min.as_ref(), max.as_ref(), *x1, *x2, char_set, range_constraint),
+            ) => intersect_single_and_range(
+                value,
+                min.as_ref(),
+                max.as_ref(),
+                *x1,
+                *x2,
+                char_set,
+                range_constraint,
+            ),
             (
                 _,
                 Some(SubtypeElements::SingleValue {
@@ -743,7 +772,15 @@ fn fold_constraint_set(
                     value: v,
                     extensible: x2,
                 }),
-            ) => union_single_and_range(&v, min.as_ref(), char_set, max.as_ref(), *x1, x2, range_constraint),
+            ) => union_single_and_range(
+                &v,
+                min.as_ref(),
+                char_set,
+                max.as_ref(),
+                *x1,
+                x2,
+                range_constraint,
+            ),
             (
                 SubtypeElements::SingleValue {
                     value: v,
@@ -754,7 +791,15 @@ fn fold_constraint_set(
                     max,
                     extensible: x2,
                 }),
-            ) => union_single_and_range(v, min.as_ref(), char_set, max.as_ref(), *x1, x2, range_constraint),
+            ) => union_single_and_range(
+                v,
+                min.as_ref(),
+                char_set,
+                max.as_ref(),
+                *x1,
+                x2,
+                range_constraint,
+            ),
             (
                 SubtypeElements::ValueRange {
                     min: min1,
@@ -951,7 +996,14 @@ fn union_single_and_range(
             extensible,
         })),
         (_, _, _, true, _, _) => Ok(None),
-        (ASN1Value::String(s1), Some(ASN1Value::String(min)), Some(ASN1Value::String(max)), _, Some(chars), _) => {
+        (
+            ASN1Value::String(s1),
+            Some(ASN1Value::String(min)),
+            Some(ASN1Value::String(max)),
+            _,
+            Some(chars),
+            _,
+        ) => {
             let min_i = find_string_index(min, chars)?;
             let max_i = find_string_index(max, chars)?;
             let mut indicies = std::collections::BTreeSet::new();
@@ -976,8 +1028,8 @@ fn union_single_and_range(
                 let min_i = indices[0];
                 let max_i = indices[indices.len() - 1];
                 Ok(Some(SubtypeElements::ValueRange {
-                    min: Some(ASN1Value::String(chars.get(&min_i).unwrap().to_string())),
-                    max: Some(ASN1Value::String(chars.get(&max_i).unwrap().to_string())),
+                    min: Some(ASN1Value::String(chars.get(min_i).unwrap().to_string())),
+                    max: Some(ASN1Value::String(chars.get(max_i).unwrap().to_string())),
                     extensible: false,
                 }))
             } else {
@@ -990,7 +1042,7 @@ fn union_single_and_range(
                     extensible: false,
                 }))
             }
-        },
+        }
         (ASN1Value::String(_), _, _, _, None, true) => Ok(None),
         _ => Err(GrammarError::new(
             &format!("Unsupported operation for values {v:?} and {min:?}..{max:?}"),
@@ -1148,7 +1200,7 @@ mod tests {
                         }
                     ))
                 },
-                Some(&CharacterStringType::IA5String.character_set()),
+                Some(CharacterStringType::IA5String.character_set()),
                 false
             )
             .unwrap()
@@ -1173,7 +1225,7 @@ mod tests {
                         }
                     ))
                 },
-                Some(&CharacterStringType::IA5String.character_set()),
+                Some(CharacterStringType::IA5String.character_set()),
                 false
             )
             .unwrap()
@@ -1203,7 +1255,7 @@ mod tests {
                         }
                     ))
                 },
-                Some(&CharacterStringType::PrintableString.character_set()),
+                Some(CharacterStringType::PrintableString.character_set()),
                 false,
             )
             .unwrap()
@@ -1230,7 +1282,7 @@ mod tests {
                         }
                     ))
                 },
-                Some(&CharacterStringType::PrintableString.character_set()),
+                Some(CharacterStringType::PrintableString.character_set()),
                 false
             )
             .unwrap()
@@ -1262,7 +1314,7 @@ mod tests {
                         }
                     ))
                 },
-                Some(&CharacterStringType::VisibleString.character_set()),
+                Some(CharacterStringType::VisibleString.character_set()),
                 false,
             )
             .unwrap()
@@ -1290,7 +1342,7 @@ mod tests {
                         }
                     ))
                 },
-                Some(&CharacterStringType::PrintableString.character_set()),
+                Some(CharacterStringType::PrintableString.character_set()),
                 false
             )
             .unwrap()
@@ -1476,7 +1528,7 @@ mod tests {
         assert_eq!(
             fold_constraint_set(
                 &set_op(SetOperator::Intersection),
-                Some(&CharacterStringType::IA5String.character_set()),
+                Some(CharacterStringType::IA5String.character_set()),
                 false
             )
             .unwrap()
@@ -1493,7 +1545,7 @@ mod tests {
         assert_eq!(
             fold_constraint_set(
                 &set_op(SetOperator::Union),
-                Some(&CharacterStringType::IA5String.character_set()),
+                Some(CharacterStringType::IA5String.character_set()),
                 false
             )
             .unwrap(),
@@ -1520,7 +1572,7 @@ mod tests {
         assert_eq!(
             fold_constraint_set(
                 &set_op(SetOperator::Intersection),
-                Some(&CharacterStringType::PrintableString.character_set()),
+                Some(CharacterStringType::PrintableString.character_set()),
                 false
             )
             .unwrap()
@@ -1533,7 +1585,7 @@ mod tests {
         assert_eq!(
             fold_constraint_set(
                 &set_op(SetOperator::Union),
-                Some(&CharacterStringType::PrintableString.character_set()),
+                Some(CharacterStringType::PrintableString.character_set()),
                 false
             )
             .unwrap(),
@@ -1575,7 +1627,7 @@ mod tests {
         assert_eq!(
             fold_constraint_set(
                 &set_op(SetOperator::Intersection),
-                Some(&CharacterStringType::PrintableString.character_set()),
+                Some(CharacterStringType::PrintableString.character_set()),
                 true
             )
             .unwrap()
@@ -1599,7 +1651,7 @@ mod tests {
         assert_eq!(
             fold_constraint_set(
                 &set_op(SetOperator::Union),
-                Some(&CharacterStringType::PrintableString.character_set()),
+                Some(CharacterStringType::PrintableString.character_set()),
                 true
             )
             .unwrap(),

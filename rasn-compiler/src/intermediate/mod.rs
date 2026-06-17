@@ -15,7 +15,14 @@ pub mod parameterization;
 pub mod types;
 pub mod utils;
 
-use std::{borrow::Cow, cell::RefCell, collections::BTreeMap, ops::Add, rc::Rc};
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    collections::BTreeMap,
+    ops::Add,
+    rc::Rc,
+    sync::LazyLock,
+};
 
 use crate::common::INTERNAL_IO_FIELD_REF_TYPE_NAME_PREFIX;
 use constraints::Constraint;
@@ -27,7 +34,6 @@ use information_object::{
 use internal_macros::EnumDebug;
 use macros::ToplevelMacroDefinition;
 use parameterization::Parameterization;
-use quote::{quote, ToTokens, TokenStreamExt};
 use types::*;
 
 #[cfg(doc)]
@@ -60,6 +66,7 @@ pub const UTF8_STRING: &str = "UTF8String";
 pub const NUMERIC_STRING: &str = "NumericString";
 pub const VISIBLE_STRING: &str = "VisibleString";
 pub const TELETEX_STRING: &str = "TeletexString";
+pub const T61_STRING: &str = "T61String";
 pub const VIDEOTEX_STRING: &str = "VideotexString";
 pub const GRAPHIC_STRING: &str = "GraphicString";
 pub const GENERAL_STRING: &str = "GeneralString";
@@ -78,6 +85,9 @@ pub const ALL: &str = "ALL";
 pub const SET: &str = "SET";
 pub const OBJECT_IDENTIFIER: &str = "OBJECT IDENTIFIER";
 pub const COMPONENTS_OF: &str = "COMPONENTS OF";
+pub const ANY: &str = "ANY";
+pub const DEFINED: &str = "DEFINED";
+pub const BY: &str = "BY";
 
 // Tagging tokens
 pub const UNIVERSAL: &str = "UNIVERSAL";
@@ -169,7 +179,7 @@ pub const TIME_OF_DAY: &str = "TIME-OF-DAY";
 pub const TYPE_IDENTIFIER: &str = "TYPE-IDENTIFIER";
 pub const ENCODING_CONTROL: &str = "ENCODING-CONTROL";
 
-pub const ASN1_KEYWORDS: [&str; 64] = [
+pub const ASN1_KEYWORDS: [&str; 67] = [
     ABSTRACT_SYNTAX,
     BIT,
     CHARACTER,
@@ -234,6 +244,9 @@ pub const ASN1_KEYWORDS: [&str; 64] = [
     INSTRUCTIONS,
     TAGS,
     MACRO,
+    ANY,
+    BY,
+    DEFINED,
 ];
 
 macro_rules! grammar_error {
@@ -810,6 +823,7 @@ pub enum ASN1Type {
     Time(Time),
     GeneralizedTime(GeneralizedTime),
     UTCTime(UTCTime),
+    Any,
     ElsewhereDeclaredType(DeclarationElsewhere),
     ChoiceSelectionType(ChoiceSelectionType),
     ObjectIdentifier(ObjectIdentifier),
@@ -880,6 +894,7 @@ impl ASN1Type {
             ASN1Type::Time(_) => Cow::Borrowed(TIME),
             ASN1Type::GeneralizedTime(_) => Cow::Borrowed(GENERALIZED_TIME),
             ASN1Type::UTCTime(_) => Cow::Borrowed(UTC_TIME),
+            ASN1Type::Any => Cow::Borrowed(ANY),
             ASN1Type::ElsewhereDeclaredType(DeclarationElsewhere { identifier, .. }) => {
                 Cow::Borrowed(identifier)
             }
@@ -895,83 +910,6 @@ impl ASN1Type {
         }
     }
 
-    pub fn builtin_or_elsewhere(
-        parent: Option<&str>,
-        module: Option<&str>,
-        identifier: &str,
-        constraints: Vec<Constraint>,
-    ) -> ASN1Type {
-        match (parent, identifier) {
-            (None, NULL) => ASN1Type::Null,
-            (None, BOOLEAN) => ASN1Type::Boolean(Boolean { constraints }),
-            (None, REAL) => ASN1Type::Real(Real { constraints }),
-            (None, INTEGER) => ASN1Type::Integer(Integer {
-                constraints,
-                distinguished_values: None,
-            }),
-            (None, BIT_STRING) => ASN1Type::BitString(BitString {
-                constraints,
-                distinguished_values: None,
-            }),
-            (None, OCTET_STRING) => ASN1Type::OctetString(OctetString { constraints }),
-            (None, GENERALIZED_TIME) => ASN1Type::GeneralizedTime(GeneralizedTime { constraints }),
-            (None, UTC_TIME) => ASN1Type::UTCTime(UTCTime { constraints }),
-            (None, OBJECT_IDENTIFIER) => {
-                ASN1Type::ObjectIdentifier(ObjectIdentifier { constraints })
-            }
-            (None, BMP_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::BMPString,
-            }),
-            (None, UTF8_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::UTF8String,
-            }),
-            (None, PRINTABLE_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::PrintableString,
-            }),
-            (None, TELETEX_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::TeletexString,
-            }),
-            (None, IA5_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::IA5String,
-            }),
-            (None, UNIVERSAL_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::UniversalString,
-            }),
-            (None, VISIBLE_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::VisibleString,
-            }),
-            (None, GENERAL_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::GeneralString,
-            }),
-            (None, VIDEOTEX_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::VideotexString,
-            }),
-            (None, GRAPHIC_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::GraphicString,
-            }),
-            (None, NUMERIC_STRING) => ASN1Type::CharacterString(CharacterString {
-                constraints,
-                ty: CharacterStringType::NumericString,
-            }),
-            _ => ASN1Type::ElsewhereDeclaredType(DeclarationElsewhere {
-                parent: parent.map(str::to_string),
-                module: module.map(str::to_string),
-                identifier: identifier.to_string(),
-                constraints,
-            }),
-        }
-    }
-
     pub fn is_builtin_type(&self) -> bool {
         !matches!(
             self,
@@ -981,22 +919,29 @@ impl ASN1Type {
         )
     }
 
-    pub fn constraints(&self) -> Option<&Vec<Constraint>> {
+    pub fn constraints(&self) -> &[Constraint] {
         match self {
-            ASN1Type::Boolean(b) => Some(b.constraints()),
-            ASN1Type::Real(r) => Some(r.constraints()),
-            ASN1Type::Integer(i) => Some(i.constraints()),
-            ASN1Type::BitString(b) => Some(b.constraints()),
-            ASN1Type::OctetString(o) => Some(o.constraints()),
-            ASN1Type::CharacterString(c) => Some(c.constraints()),
-            ASN1Type::Enumerated(e) => Some(e.constraints()),
-            ASN1Type::Time(t) => Some(t.constraints()),
-            ASN1Type::Choice(c) => Some(c.constraints()),
-            ASN1Type::Set(s) | ASN1Type::Sequence(s) => Some(s.constraints()),
-            ASN1Type::SetOf(s) | ASN1Type::SequenceOf(s) => Some(s.constraints()),
-            ASN1Type::ElsewhereDeclaredType(e) => Some(e.constraints()),
-            ASN1Type::ObjectClassField(f) => Some(f.constraints()),
-            _ => None,
+            ASN1Type::Boolean(b) => b.constraints(),
+            ASN1Type::Real(r) => r.constraints(),
+            ASN1Type::Integer(i) => i.constraints(),
+            ASN1Type::BitString(b) => b.constraints(),
+            ASN1Type::OctetString(o) => o.constraints(),
+            ASN1Type::CharacterString(c) => c.constraints(),
+            ASN1Type::Enumerated(e) => e.constraints(),
+            ASN1Type::Time(t) => t.constraints(),
+            ASN1Type::Choice(c) => c.constraints(),
+            ASN1Type::Set(s) | ASN1Type::Sequence(s) => s.constraints(),
+            ASN1Type::SetOf(s) | ASN1Type::SequenceOf(s) => s.constraints(),
+            ASN1Type::ElsewhereDeclaredType(e) => e.constraints(),
+            ASN1Type::ObjectClassField(f) => f.constraints(),
+            ASN1Type::GeneralizedTime(g) => g.constraints(),
+            ASN1Type::UTCTime(u) => u.constraints(),
+            ASN1Type::ObjectIdentifier(o) => o.constraints(),
+            ASN1Type::ChoiceSelectionType(_)
+            | ASN1Type::Null
+            | ASN1Type::Any
+            | ASN1Type::EmbeddedPdv
+            | ASN1Type::External => &[],
         }
     }
 
@@ -1015,19 +960,17 @@ impl ASN1Type {
             ASN1Type::SetOf(s) | ASN1Type::SequenceOf(s) => Some(s.constraints_mut()),
             ASN1Type::ElsewhereDeclaredType(e) => Some(e.constraints_mut()),
             ASN1Type::ObjectClassField(f) => Some(f.constraints_mut()),
-            _ => None,
+            ASN1Type::GeneralizedTime(g) => Some(g.constraints_mut()),
+            ASN1Type::UTCTime(u) => Some(u.constraints_mut()),
+            ASN1Type::ObjectIdentifier(o) => Some(o.constraints_mut()),
+            ASN1Type::ChoiceSelectionType(_)
+            | ASN1Type::Null
+            | ASN1Type::Any
+            | ASN1Type::EmbeddedPdv
+            | ASN1Type::External => None,
         }
     }
 }
-
-pub const NUMERIC_STRING_CHARSET: [char; 11] =
-    [' ', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-pub const PRINTABLE_STRING_CHARSET: [char; 74] = [
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
-    'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l',
-    'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4',
-    '5', '6', '7', '8', '9', ' ', '\'', '(', ')', '+', ',', '-', '.', '/', ':', '=', '?',
-];
 
 /// The types of an ASN1 character strings.
 #[cfg_attr(test, derive(EnumDebug))]
@@ -1048,40 +991,52 @@ pub enum CharacterStringType {
 }
 
 impl CharacterStringType {
-    pub fn character_set(&self) -> BTreeMap<usize, char> {
-        match self {
-            CharacterStringType::NumericString => {
-                NUMERIC_STRING_CHARSET.into_iter().enumerate().collect()
-            }
-            CharacterStringType::VisibleString | CharacterStringType::PrintableString => {
-                PRINTABLE_STRING_CHARSET.into_iter().enumerate().collect()
-            }
-            CharacterStringType::IA5String => (0..128u32)
-                .map(|i| char::from_u32(i).unwrap())
+    pub fn character_set(&self) -> &'static BTreeMap<usize, char> {
+        static NUMERIC_CHARSET: LazyLock<BTreeMap<usize, char>> = LazyLock::new(|| {
+            [' ', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+                .into_iter()
                 .enumerate()
-                .collect(),
-            _ => (0..u16::MAX as u32)
+                .collect()
+        });
+        static PRINTABLE_CHARSET: LazyLock<BTreeMap<usize, char>> = LazyLock::new(|| {
+            [
+                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+                'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+                'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+                'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ' ', '\'',
+                '(', ')', '+', ',', '-', '.', '/', ':', '=', '?',
+            ]
+            .into_iter()
+            .enumerate()
+            .collect()
+        });
+        // X.680 defines VisibleString using the ISO/IEC 646 encoding (cells 2/0–7/14),
+        // i.e. the 95 visible characters with indices computed as (ISO 646 ENCODING) - 32.
+        static VISIBLE_CHARSET: LazyLock<BTreeMap<usize, char>> = LazyLock::new(|| {
+            (0x20u32..=0x7Eu32)
                 .filter_map(char::from_u32)
                 .enumerate()
-                .collect(),
-        }
-    }
-}
+                .collect()
+        });
+        static IA5_CHARSET: LazyLock<BTreeMap<usize, char>> = LazyLock::new(|| {
+            (0..128u32)
+                .filter_map(char::from_u32)
+                .enumerate()
+                .collect()
+        });
+        static ANY_CHARSET: LazyLock<BTreeMap<usize, char>> = LazyLock::new(|| {
+            (0..u16::MAX as u32)
+                .filter_map(char::from_u32)
+                .enumerate()
+                .collect()
+        });
 
-impl From<&str> for CharacterStringType {
-    fn from(value: &str) -> Self {
-        match value {
-            IA5_STRING => Self::IA5String,
-            NUMERIC_STRING => Self::NumericString,
-            VISIBLE_STRING => Self::VisibleString,
-            TELETEX_STRING => Self::TeletexString,
-            VIDEOTEX_STRING => Self::VideotexString,
-            GRAPHIC_STRING => Self::GraphicString,
-            GENERAL_STRING => Self::GeneralString,
-            UNIVERSAL_STRING => Self::UniversalString,
-            BMP_STRING => Self::BMPString,
-            PRINTABLE_STRING => Self::PrintableString,
-            _ => Self::UTF8String,
+        match self {
+            CharacterStringType::NumericString => &NUMERIC_CHARSET,
+            CharacterStringType::VisibleString => &VISIBLE_CHARSET,
+            CharacterStringType::PrintableString => &PRINTABLE_CHARSET,
+            CharacterStringType::IA5String => &IA5_CHARSET,
+            _ => &ANY_CHARSET,
         }
     }
 }
@@ -1098,22 +1053,6 @@ pub enum IntegerType {
     Int64,
     Uint64,
     Unbounded,
-}
-
-impl ToTokens for IntegerType {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            IntegerType::Int8 => tokens.append_all(quote!(i8)),
-            IntegerType::Uint8 => tokens.append_all(quote!(u8)),
-            IntegerType::Int16 => tokens.append_all(quote!(i16)),
-            IntegerType::Uint16 => tokens.append_all(quote!(u16)),
-            IntegerType::Int32 => tokens.append_all(quote!(i32)),
-            IntegerType::Uint32 => tokens.append_all(quote!(u32)),
-            IntegerType::Int64 => tokens.append_all(quote!(i64)),
-            IntegerType::Uint64 => tokens.append_all(quote!(u64)),
-            IntegerType::Unbounded => tokens.append_all(quote!(Integer)),
-        }
-    }
 }
 
 impl IntegerType {
@@ -1168,6 +1107,7 @@ pub enum ASN1Value {
     },
     Time(String),
     ElsewhereDeclaredValue {
+        module: Option<String>,
         parent: Option<String>,
         identifier: String,
     },
@@ -1336,17 +1276,6 @@ pub struct DeclarationElsewhere {
     pub module: Option<String>,
     pub identifier: String,
     pub constraints: Vec<Constraint>,
-}
-
-impl From<(Option<&str>, &str, Option<Vec<Constraint>>)> for DeclarationElsewhere {
-    fn from(value: (Option<&str>, &str, Option<Vec<Constraint>>)) -> Self {
-        DeclarationElsewhere {
-            parent: value.0.map(ToString::to_string),
-            module: None,
-            identifier: value.1.into(),
-            constraints: value.2.unwrap_or_default(),
-        }
-    }
 }
 
 /// Tag classes
